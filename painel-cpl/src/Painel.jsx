@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 
 const SUPABASE_URL = 'https://rtbwdzvtphnhredutwur.supabase.co';
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ0YndkenZ0cGhuaHJlZHV0d3VyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwMTE2NjksImV4cCI6MjEwMDU4NzY2OX0.PHV0DFj4pp5_X-Dc2IrtlF7pFibTxeGZAdj41mKOzSw';
@@ -8,6 +8,24 @@ const HEADERS = {
   Authorization: `Bearer ${ANON_KEY}`,
 };
 
+const COLUMNS = [
+  { key: 'alto', title: 'Custo por lead alto', accent: 'var(--amber)', accentDim: 'var(--amber-dim)' },
+  { key: 'normal', title: 'Custo por lead normal', accent: 'var(--green)', accentDim: 'var(--green-dim)' },
+  { key: 'otimizado', title: 'Otimizados', accent: 'var(--blue)', accentDim: 'var(--blue-dim)' },
+];
+
+function normalizeStatus(status) {
+  const s = (status || '').toLowerCase();
+  if (s === 'alto') return 'alto';
+  if (s === 'otimizado') return 'otimizado';
+  return 'normal';
+}
+
+function fmtMoney(v) {
+  if (v === null || v === undefined || Number.isNaN(v)) return '—';
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+}
+
 function timeAgo(iso) {
   if (!iso) return '—';
   const diff = Date.now() - new Date(iso).getTime();
@@ -16,82 +34,105 @@ function timeAgo(iso) {
   if (min < 60) return `${min}min atrás`;
   const h = Math.floor(min / 60);
   if (h < 24) return `${h}h atrás`;
-  const d = Math.floor(h / 24);
-  return `${d}d atrás`;
+  return `${Math.floor(h / 24)}d atrás`;
 }
 
-function fmtMoney(v) {
-  if (v === null || v === undefined) return '—';
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+function Card({ cliente, onOpen, onDragStart, columnKey }) {
+  const overMax =
+    cliente.cpl !== null &&
+    cliente.cpl !== undefined &&
+    cliente['Custo por Resultado Máximo'] !== null &&
+    cliente.cpl > cliente['Custo por Resultado Máximo'];
+
+  return (
+    <div
+      className={`kcard kcard-${columnKey}`}
+      draggable
+      onDragStart={(e) => onDragStart(e, cliente.id)}
+      onClick={() => onOpen(cliente)}
+    >
+      <div className="kcard-head">
+        <span className="kcard-name">{cliente.Cliente}</span>
+        {cliente.observacao ? <span className="kcard-note-dot" title="Tem observação" /> : null}
+      </div>
+      <div className="kcard-especialista">{cliente.Especialista || 'sem especialista'}</div>
+      <div className="kcard-cpl-row">
+        <div className="kcard-cpl-block">
+          <span className="kcard-cpl-label">CPL atual</span>
+          <span className={`kcard-cpl-value ${overMax ? 'over' : ''}`}>{fmtMoney(cliente.cpl)}</span>
+        </div>
+        <div className="kcard-cpl-block right">
+          <span className="kcard-cpl-label">máximo</span>
+          <span className="kcard-cpl-max">{fmtMoney(cliente['Custo por Resultado Máximo'])}</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function ClienteCard({ cliente, onSave }) {
+function DetailModal({ cliente, onClose, onSave, onMarkOtimizado, onUnmarkOtimizado }) {
   const [obs, setObs] = useState(cliente.observacao || '');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const dirty = obs !== (cliente.observacao || '');
-  const isAlto = (cliente.Status || '').toLowerCase() === 'alto';
+  const isOtimizado = normalizeStatus(cliente.Status) === 'otimizado';
 
   const handleSave = async () => {
     setSaving(true);
     await onSave(cliente.id, obs);
     setSaving(false);
     setSaved(true);
-    setTimeout(() => setSaved(false), 1800);
+    setTimeout(() => setSaved(false), 1600);
   };
 
-  const custo = cliente['Custo por Resultado Máximo'];
-
   return (
-    <div className={`card ${isAlto ? 'card-alto' : 'card-normal'}`}>
-      <div className="card-top">
-        <div className="card-id">
-          <span className="dot" />
-          <span className="cliente-nome">{cliente.Cliente}</span>
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <div className="modal-eyebrow">{cliente.Especialista || 'sem especialista'}</div>
+            <h2>{cliente.Cliente}</h2>
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label="Fechar">✕</button>
         </div>
-        <span className={`status-tag ${isAlto ? 'tag-alto' : 'tag-normal'}`}>
-          {isAlto ? 'ALTO' : 'NORMAL'}
-        </span>
-      </div>
 
-      <div className="card-meta">
-        <div className="meta-row">
-          <span className="meta-label">especialista</span>
-          <span className="meta-val">{cliente.Especialista || '—'}</span>
+        <div className="modal-stats">
+          <div className="modal-stat">
+            <span className="modal-stat-label">CPL atual</span>
+            <span className="modal-stat-value">{fmtMoney(cliente.cpl)}</span>
+          </div>
+          <div className="modal-stat">
+            <span className="modal-stat-label">CPL máximo</span>
+            <span className="modal-stat-value">{fmtMoney(cliente['Custo por Resultado Máximo'])}</span>
+          </div>
+          <div className="modal-stat">
+            <span className="modal-stat-label">última verificação</span>
+            <span className="modal-stat-value small">{timeAgo(cliente.ultima_verificacao)}</span>
+          </div>
         </div>
-        <div className="meta-row">
-          <span className="meta-label">id conta</span>
-          <span className="meta-val mono">{cliente.ID || '—'}</span>
-        </div>
-        <div className="meta-row">
-          <span className="meta-label">cpl máx</span>
-          <span className="meta-val mono">{fmtMoney(custo)}</span>
-        </div>
-        <div className="meta-row">
-          <span className="meta-label">atualizado</span>
-          <span className="meta-val mono">{timeAgo(cliente.atualizado_em)}</span>
-        </div>
-      </div>
 
-      <div className="obs-block">
-        <label className="obs-label" htmlFor={`obs-${cliente.id}`}>observação</label>
+        <label className="modal-label" htmlFor="modal-obs">observação</label>
         <textarea
-          id={`obs-${cliente.id}`}
-          className="obs-input"
-          placeholder="ex: otimização feita, aguardando ação..."
+          id="modal-obs"
+          className="modal-textarea"
+          placeholder="ex: otimização feita, aguardando ação do cliente..."
           value={obs}
           onChange={(e) => setObs(e.target.value)}
-          rows={2}
+          rows={4}
         />
-        <div className="obs-actions">
-          <span className={`obs-status ${saved ? 'obs-status-show' : ''}`}>salvo</span>
+
+        <div className="modal-actions">
           <button
-            className="save-btn"
-            disabled={!dirty || saving}
-            onClick={handleSave}
+            className={`modal-btn ${isOtimizado ? 'ghost' : 'primary-otimizado'}`}
+            onClick={() => (isOtimizado ? onUnmarkOtimizado(cliente.id) : onMarkOtimizado(cliente.id))}
           >
-            {saving ? 'salvando…' : 'salvar'}
+            {isOtimizado ? '↩ voltar para status calculado' : '✓ marcar como otimizado'}
           </button>
+          <div className="modal-actions-right">
+            <span className={`modal-saved ${saved ? 'show' : ''}`}>salvo</span>
+            <button className="modal-btn primary" disabled={saving} onClick={handleSave}>
+              {saving ? 'salvando…' : 'salvar observação'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -104,54 +145,100 @@ export default function Painel() {
   const [error, setError] = useState(null);
   const [especialistaFiltro, setEspecialistaFiltro] = useState('todos');
   const [busca, setBusca] = useState('');
-  const [lastFetch, setLastFetch] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [dragOverCol, setDragOverCol] = useState(null);
+  const draggingId = useRef(null);
 
-  const fetchClientes = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     try {
       setError(null);
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes?select=*&order=Cliente.asc`, {
-        headers: HEADERS,
-      });
-      if (!res.ok) {
-        let body = '';
-        try { body = await res.text(); } catch {}
-        throw new Error(`HTTP ${res.status} ${res.statusText} — ${body.slice(0, 300)}`);
+      const [clientesRes, historicoRes] = await Promise.all([
+        fetch(`${SUPABASE_URL}/rest/v1/clientes?select=*&order=Cliente.asc`, { headers: HEADERS }),
+        fetch(
+          `${SUPABASE_URL}/rest/v1/historico_verificacoes?select=cliente_id,custo_por_resultado,data_verificacao&order=data_verificacao.desc&limit=1000`,
+          { headers: HEADERS }
+        ),
+      ]);
+
+      if (!clientesRes.ok) {
+        const body = await clientesRes.text().catch(() => '');
+        throw new Error(`clientes: HTTP ${clientesRes.status} — ${body.slice(0, 200)}`);
       }
-      const data = await res.json();
-      setClientes(data);
-      setLastFetch(new Date());
+
+      const clientesData = await clientesRes.json();
+
+      let latestByClient = {};
+      if (historicoRes.ok) {
+        const historicoData = await historicoRes.json();
+        for (const row of historicoData) {
+          if (!latestByClient[row.cliente_id]) {
+            latestByClient[row.cliente_id] = row;
+          }
+        }
+      }
+
+      const merged = clientesData.map((c) => ({
+        ...c,
+        cpl: latestByClient[c.id]?.custo_por_resultado ?? null,
+        ultima_verificacao: latestByClient[c.id]?.data_verificacao ?? null,
+      }));
+
+      setClientes(merged);
     } catch (e) {
-      setError(e.message || String(e) || 'falha desconhecida ao carregar dados');
+      setError(e.message || String(e));
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchClientes();
-    const interval = setInterval(fetchClientes, 60000);
+    fetchData();
+    const interval = setInterval(fetchData, 60000);
     return () => clearInterval(interval);
-  }, [fetchClientes]);
+  }, [fetchData]);
+
+  const updateStatus = useCallback(async (id, newStatus) => {
+    setClientes((prev) => prev.map((c) => (c.id === id ? { ...c, Status: newStatus } : c)));
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes?id=eq.${id}`, {
+        method: 'PATCH',
+        headers: { ...HEADERS, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ Status: newStatus, atualizado_em: new Date().toISOString() }),
+      });
+      if (!res.ok) throw new Error('falha ao salvar status');
+    } catch (e) {
+      fetchData();
+    }
+  }, [fetchData]);
 
   const handleSaveObs = useCallback(async (id, novoValor) => {
     try {
       const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes?id=eq.${id}`, {
         method: 'PATCH',
-        headers: {
-          ...HEADERS,
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal',
-        },
+        headers: { ...HEADERS, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
         body: JSON.stringify({ observacao: novoValor, atualizado_em: new Date().toISOString() }),
       });
-      if (!res.ok) throw new Error('falha ao salvar');
-      setClientes((prev) =>
-        prev.map((c) => (c.id === id ? { ...c, observacao: novoValor, atualizado_em: new Date().toISOString() } : c))
-      );
+      if (!res.ok) throw new Error('falha ao salvar observação');
+      setClientes((prev) => prev.map((c) => (c.id === id ? { ...c, observacao: novoValor } : c)));
+      setSelected((prev) => (prev && prev.id === id ? { ...prev, observacao: novoValor } : prev));
     } catch (e) {
       alert('Não foi possível salvar a observação. Tente novamente.');
     }
   }, []);
+
+  const handleDragStart = (e, id) => {
+    draggingId.current = id;
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDrop = (colKey) => {
+    if (draggingId.current) {
+      const dbStatus = colKey === 'alto' ? 'Alto' : colKey === 'otimizado' ? 'Otimizado' : 'Normal';
+      updateStatus(draggingId.current, dbStatus);
+    }
+    draggingId.current = null;
+    setDragOverCol(null);
+  };
 
   const especialistas = useMemo(() => {
     const set = new Set(clientes.map((c) => c.Especialista).filter(Boolean));
@@ -166,36 +253,52 @@ export default function Painel() {
     });
   }, [clientes, especialistaFiltro, busca]);
 
-  const altos = filtrados.filter((c) => (c.Status || '').toLowerCase() === 'alto');
-  const normais = filtrados.filter((c) => (c.Status || '').toLowerCase() !== 'alto');
+  const byColumn = useMemo(() => {
+    const groups = { alto: [], normal: [], otimizado: [] };
+    for (const c of filtrados) {
+      groups[normalizeStatus(c.Status)].push(c);
+    }
+    for (const key of Object.keys(groups)) {
+      groups[key].sort((a, b) => {
+        const av = a.cpl ?? -1;
+        const bv = b.cpl ?? -1;
+        return bv - av;
+      });
+    }
+    return groups;
+  }, [filtrados]);
 
   return (
     <div className="painel-root">
       <style>{`
         .painel-root {
-          --bg: #0c1420;
-          --bg-panel: #121d2e;
-          --bg-card: #16233688;
-          --border: #24344a;
-          --border-soft: #1b2a3d;
-          --text: #dbe6f2;
-          --text-dim: #8296ad;
-          --text-faint: #566780;
+          --bg: #0b1220;
+          --bg-panel: #111b2c;
+          --bg-card: #14203488;
+          --bg-card-hover: #172741;
+          --border: #223349;
+          --border-soft: #1a2a3e;
+          --text: #dfe9f5;
+          --text-dim: #8698b0;
+          --text-faint: #556780;
           --green: #4fd68c;
-          --green-dim: #1c3a2c;
-          --amber: #e0a54d;
-          --amber-dim: #3d2e17;
-          --mono: 'JetBrains Mono', 'SF Mono', 'Roboto Mono', Consolas, monospace;
+          --green-dim: #163527;
+          --amber: #e3a94e;
+          --amber-dim: #3c2c15;
+          --blue: #5aa9e6;
+          --blue-dim: #16293c;
+          --red: #e2664f;
+          --mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
           --sans: 'Inter', -apple-system, 'Segoe UI', sans-serif;
 
           background: var(--bg);
           background-image:
-            radial-gradient(circle at 15% 0%, #16273d55 0%, transparent 45%),
-            radial-gradient(circle at 85% 100%, #14263a44 0%, transparent 50%);
+            radial-gradient(circle at 10% -10%, #16273d55 0%, transparent 45%),
+            radial-gradient(circle at 90% 110%, #14263a55 0%, transparent 50%);
           color: var(--text);
           font-family: var(--sans);
           min-height: 100vh;
-          padding: 28px 24px 60px;
+          padding: 24px 24px 40px;
           box-sizing: border-box;
         }
         .painel-root * { box-sizing: border-box; }
@@ -203,44 +306,49 @@ export default function Painel() {
         .header {
           display: flex;
           justify-content: space-between;
-          align-items: flex-end;
-          flex-wrap: wrap;
+          align-items: center;
           gap: 16px;
-          margin-bottom: 22px;
-          padding-bottom: 18px;
+          flex-wrap: wrap;
+          margin-bottom: 20px;
+          padding-bottom: 16px;
           border-bottom: 1px solid var(--border-soft);
         }
-        .header-title {
+        .header-brand {
           display: flex;
-          flex-direction: column;
-          gap: 4px;
+          align-items: center;
+          gap: 12px;
         }
-        .eyebrow {
-          font-family: var(--mono);
-          font-size: 11px;
-          letter-spacing: 0.14em;
-          color: var(--text-faint);
-          text-transform: uppercase;
+        .header-logo {
+          width: 34px;
+          height: 34px;
+          border-radius: 8px;
+          object-fit: cover;
+          border: 1px solid var(--border);
         }
         .header-title h1 {
           margin: 0;
-          font-size: 22px;
+          font-size: 19px;
           font-weight: 600;
           letter-spacing: -0.01em;
-          color: var(--text);
+        }
+        .header-title .eyebrow {
+          font-family: var(--mono);
+          font-size: 10.5px;
+          letter-spacing: 0.13em;
+          text-transform: uppercase;
+          color: var(--text-faint);
         }
         .header-status {
           font-family: var(--mono);
-          font-size: 11.5px;
+          font-size: 11px;
           color: var(--text-faint);
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 7px;
         }
         .pulse {
           width: 6px; height: 6px; border-radius: 50%;
           background: var(--green);
-          box-shadow: 0 0 0 0 rgba(79,214,140,0.6);
           animation: pulse 2.2s infinite;
         }
         @keyframes pulse {
@@ -249,33 +357,11 @@ export default function Painel() {
           100% { box-shadow: 0 0 0 0 rgba(79,214,140,0); }
         }
 
-        .summary-bar {
+        .controls {
           display: flex;
           gap: 10px;
           margin-bottom: 20px;
           flex-wrap: wrap;
-        }
-        .summary-chip {
-          font-family: var(--mono);
-          font-size: 12px;
-          padding: 7px 13px;
-          border-radius: 6px;
-          border: 1px solid var(--border);
-          background: var(--bg-panel);
-          color: var(--text-dim);
-          display: flex;
-          align-items: center;
-          gap: 7px;
-        }
-        .summary-chip b { color: var(--text); font-weight: 600; }
-        .chip-dot { width: 6px; height: 6px; border-radius: 50%; }
-
-        .controls {
-          display: flex;
-          gap: 10px;
-          margin-bottom: 26px;
-          flex-wrap: wrap;
-          align-items: center;
         }
         .select, .search-input {
           background: var(--bg-panel);
@@ -284,189 +370,274 @@ export default function Painel() {
           font-family: var(--sans);
           font-size: 13px;
           padding: 8px 12px;
-          border-radius: 6px;
+          border-radius: 7px;
           outline: none;
         }
-        .select:focus, .search-input:focus {
-          border-color: var(--green);
-        }
-        .search-input {
-          min-width: 220px;
-        }
+        .select:focus, .search-input:focus { border-color: var(--blue); }
+        .search-input { min-width: 200px; }
         .search-input::placeholder { color: var(--text-faint); }
 
-        .section-heading {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          margin: 30px 0 14px;
-        }
-        .section-heading h2 {
-          font-size: 13px;
-          font-weight: 600;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
-          margin: 0;
-        }
-        .section-heading.alto h2 { color: var(--amber); }
-        .section-heading.normal h2 { color: var(--green); }
-        .section-line {
-          flex: 1;
-          height: 1px;
-          background: var(--border-soft);
-        }
-        .section-count {
-          font-family: var(--mono);
-          font-size: 12px;
-          color: var(--text-faint);
-        }
-
-        .grid {
+        .board {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-          gap: 14px;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 16px;
+          align-items: start;
+        }
+        @media (max-width: 900px) {
+          .board { grid-template-columns: 1fr; }
         }
 
-        .card {
-          background: var(--bg-card);
-          border: 1px solid var(--border);
-          border-radius: 10px;
-          padding: 16px;
-          display: flex;
-          flex-direction: column;
-          gap: 14px;
-          transition: border-color 0.15s ease;
+        .column {
+          background: var(--bg-panel);
+          border: 1px solid var(--border-soft);
+          border-radius: 12px;
+          padding: 14px;
+          min-height: 200px;
+          transition: border-color 0.15s ease, background 0.15s ease;
         }
-        .card-alto { border-left: 3px solid var(--amber); }
-        .card-normal { border-left: 3px solid var(--green); }
+        .column.drag-over {
+          border-color: var(--col-accent);
+          background: #14203440;
+        }
 
-        .card-top {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        .card-id {
+        .column-head {
           display: flex;
           align-items: center;
           gap: 8px;
-          min-width: 0;
+          margin-bottom: 12px;
         }
-        .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-        .card-alto .dot { background: var(--amber); }
-        .card-normal .dot { background: var(--green); }
-        .cliente-nome {
+        .column-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--col-accent); flex-shrink: 0; }
+        .column-title {
+          font-size: 12.5px;
           font-weight: 600;
-          font-size: 14.5px;
+          letter-spacing: 0.02em;
+          color: var(--text);
+          flex: 1;
+        }
+        .column-count {
+          font-family: var(--mono);
+          font-size: 11px;
+          color: var(--text-faint);
+          background: var(--bg-card);
+          border: 1px solid var(--border-soft);
+          padding: 1px 7px;
+          border-radius: 20px;
+        }
+
+        .column-cards {
+          display: flex;
+          flex-direction: column;
+          gap: 9px;
+          min-height: 80px;
+        }
+        .column-empty {
+          font-family: var(--mono);
+          font-size: 11.5px;
+          color: var(--text-faint);
+          text-align: center;
+          padding: 18px 8px;
+          border: 1px dashed var(--border-soft);
+          border-radius: 8px;
+        }
+
+        .kcard {
+          background: var(--bg-card);
+          border: 1px solid var(--border);
+          border-left: 3px solid var(--col-accent);
+          border-radius: 9px;
+          padding: 12px 13px;
+          cursor: grab;
+          transition: background 0.12s ease, transform 0.08s ease, border-color 0.12s ease;
+        }
+        .kcard:hover { background: var(--bg-card-hover); border-color: #2e4560; }
+        .kcard:active { cursor: grabbing; transform: scale(0.98); }
+
+        .kcard-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 3px;
+        }
+        .kcard-name {
+          font-weight: 600;
+          font-size: 14px;
           color: var(--text);
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .status-tag {
-          font-family: var(--mono);
-          font-size: 10px;
-          letter-spacing: 0.08em;
-          padding: 3px 8px;
-          border-radius: 4px;
+        .kcard-note-dot {
+          width: 6px; height: 6px; border-radius: 50%;
+          background: var(--blue);
           flex-shrink: 0;
         }
-        .tag-alto { background: var(--amber-dim); color: var(--amber); }
-        .tag-normal { background: var(--green-dim); color: var(--green); }
-
-        .card-meta {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 8px 10px;
-        }
-        .meta-row {
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-        }
-        .meta-label {
-          font-size: 10px;
+        .kcard-especialista {
+          font-size: 11.5px;
           color: var(--text-faint);
+          margin-bottom: 10px;
+        }
+
+        .kcard-cpl-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          border-top: 1px solid var(--border-soft);
+          padding-top: 9px;
+        }
+        .kcard-cpl-block { display: flex; flex-direction: column; gap: 2px; }
+        .kcard-cpl-block.right { align-items: flex-end; }
+        .kcard-cpl-label {
+          font-size: 9.5px;
           text-transform: uppercase;
           letter-spacing: 0.05em;
+          color: var(--text-faint);
         }
-        .meta-val {
-          font-size: 13px;
+        .kcard-cpl-value {
+          font-family: var(--mono);
+          font-size: 15px;
+          font-weight: 600;
           color: var(--text);
         }
-        .meta-val.mono { font-family: var(--mono); font-size: 12.5px; }
-
-        .obs-block {
-          border-top: 1px solid var(--border-soft);
-          padding-top: 12px;
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
+        .kcard-cpl-value.over { color: var(--red); }
+        .kcard-cpl-max {
+          font-family: var(--mono);
+          font-size: 12px;
+          color: var(--text-dim);
         }
-        .obs-label {
-          font-size: 10px;
+
+        /* Modal */
+        .modal-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(6,10,17,0.7);
+          backdrop-filter: blur(2px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 50;
+          padding: 20px;
+        }
+        .modal {
+          background: var(--bg-panel);
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          width: 100%;
+          max-width: 440px;
+          padding: 22px;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        .modal-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 18px;
+        }
+        .modal-eyebrow {
+          font-family: var(--mono);
+          font-size: 11px;
           color: var(--text-faint);
           text-transform: uppercase;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.06em;
+          margin-bottom: 3px;
         }
-        .obs-input {
+        .modal-head h2 { margin: 0; font-size: 19px; }
+        .modal-close {
+          background: transparent;
+          border: 1px solid var(--border);
+          color: var(--text-dim);
+          border-radius: 7px;
+          width: 28px; height: 28px;
+          cursor: pointer;
+          font-size: 13px;
+        }
+        .modal-close:hover { color: var(--text); border-color: var(--text-dim); }
+
+        .modal-stats {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 8px;
+          margin-bottom: 18px;
+        }
+        .modal-stat {
+          background: var(--bg-card);
+          border: 1px solid var(--border-soft);
+          border-radius: 8px;
+          padding: 9px 10px;
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+        .modal-stat-label {
+          font-size: 9.5px;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: var(--text-faint);
+        }
+        .modal-stat-value { font-family: var(--mono); font-size: 14.5px; font-weight: 600; }
+        .modal-stat-value.small { font-size: 12px; font-weight: 500; color: var(--text-dim); }
+
+        .modal-label {
+          font-size: 10.5px;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--text-faint);
+          display: block;
+          margin-bottom: 6px;
+        }
+        .modal-textarea {
+          width: 100%;
           background: #0e1826;
           border: 1px solid var(--border);
-          border-radius: 6px;
+          border-radius: 8px;
           color: var(--text);
           font-family: var(--sans);
-          font-size: 13px;
-          padding: 8px 10px;
+          font-size: 13.5px;
+          padding: 10px 12px;
           resize: vertical;
           outline: none;
-          min-height: 42px;
         }
-        .obs-input:focus { border-color: var(--green); }
-        .obs-input::placeholder { color: var(--text-faint); }
+        .modal-textarea:focus { border-color: var(--blue); }
 
-        .obs-actions {
+        .modal-actions {
+          margin-top: 16px;
           display: flex;
-          justify-content: flex-end;
+          justify-content: space-between;
           align-items: center;
           gap: 10px;
+          flex-wrap: wrap;
         }
-        .obs-status {
+        .modal-actions-right { display: flex; align-items: center; gap: 10px; }
+        .modal-saved {
           font-family: var(--mono);
           font-size: 11px;
           color: var(--green);
           opacity: 0;
           transition: opacity 0.2s ease;
         }
-        .obs-status-show { opacity: 1; }
-        .save-btn {
+        .modal-saved.show { opacity: 1; }
+        .modal-btn {
           font-family: var(--sans);
           font-size: 12.5px;
           font-weight: 600;
-          padding: 6px 14px;
-          border-radius: 6px;
+          padding: 8px 14px;
+          border-radius: 7px;
           border: 1px solid var(--border);
           background: #1a2942;
           color: var(--text);
           cursor: pointer;
           transition: all 0.15s ease;
         }
-        .save-btn:hover:not(:disabled) {
-          border-color: var(--green);
-          color: var(--green);
+        .modal-btn.primary:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+        .modal-btn.primary:disabled { opacity: 0.5; cursor: default; }
+        .modal-btn.primary-otimizado {
+          background: var(--blue-dim);
+          border-color: #2a4a68;
+          color: var(--blue);
         }
-        .save-btn:disabled {
-          opacity: 0.4;
-          cursor: default;
-        }
-
-        .empty-state {
-          font-family: var(--mono);
-          font-size: 13px;
-          color: var(--text-faint);
-          padding: 24px;
-          text-align: center;
-          border: 1px dashed var(--border);
-          border-radius: 8px;
-        }
+        .modal-btn.primary-otimizado:hover { border-color: var(--blue); }
+        .modal-btn.ghost { background: transparent; color: var(--text-dim); }
+        .modal-btn.ghost:hover { color: var(--text); border-color: var(--text-dim); }
 
         .loading-state, .error-state {
           font-family: var(--mono);
@@ -475,21 +646,20 @@ export default function Painel() {
           padding: 40px;
           text-align: center;
         }
-        .error-state { color: var(--amber); }
-
-        @media (max-width: 600px) {
-          .header { flex-direction: column; align-items: flex-start; }
-        }
+        .error-state { color: var(--red); }
       `}</style>
 
       <div className="header">
-        <div className="header-title">
-          <span className="eyebrow">Monitoramento · CPL por cliente</span>
-          <h1>Painel de Campanhas</h1>
+        <div className="header-brand">
+          <img src="/logo.jpg" alt="logo" className="header-logo" />
+          <div className="header-title">
+            <span className="eyebrow">Monitoramento · CPL por cliente</span>
+            <h1>Painel de Campanhas</h1>
+          </div>
         </div>
         <div className="header-status">
           <span className="pulse" />
-          {lastFetch ? `atualizado ${timeAgo(lastFetch.toISOString())}` : 'conectando…'}
+          ao vivo
         </div>
       </div>
 
@@ -499,26 +669,8 @@ export default function Painel() {
         <div className="error-state">não foi possível carregar os dados — {error}</div>
       ) : (
         <>
-          <div className="summary-bar">
-            <div className="summary-chip">
-              <span className="chip-dot" style={{ background: 'var(--amber)' }} />
-              <b>{altos.length}</b> em alto
-            </div>
-            <div className="summary-chip">
-              <span className="chip-dot" style={{ background: 'var(--green)' }} />
-              <b>{normais.length}</b> em normal
-            </div>
-            <div className="summary-chip">
-              <b>{filtrados.length}</b> total exibido
-            </div>
-          </div>
-
           <div className="controls">
-            <select
-              className="select"
-              value={especialistaFiltro}
-              onChange={(e) => setEspecialistaFiltro(e.target.value)}
-            >
+            <select className="select" value={especialistaFiltro} onChange={(e) => setEspecialistaFiltro(e.target.value)}>
               <option value="todos">todos os especialistas</option>
               {especialistas.map((e) => (
                 <option key={e} value={e}>{e}</option>
@@ -532,36 +684,44 @@ export default function Painel() {
             />
           </div>
 
-          <div className="section-heading alto">
-            <h2>Alto</h2>
-            <div className="section-line" />
-            <span className="section-count">{altos.length}</span>
+          <div className="board">
+            {COLUMNS.map((col) => (
+              <div
+                key={col.key}
+                className={`column ${dragOverCol === col.key ? 'drag-over' : ''}`}
+                style={{ '--col-accent': col.accent }}
+                onDragOver={(e) => { e.preventDefault(); setDragOverCol(col.key); }}
+                onDragLeave={() => setDragOverCol((c) => (c === col.key ? null : c))}
+                onDrop={(e) => { e.preventDefault(); handleDrop(col.key); }}
+              >
+                <div className="column-head">
+                  <span className="column-dot" />
+                  <span className="column-title">{col.title}</span>
+                  <span className="column-count">{byColumn[col.key].length}</span>
+                </div>
+                <div className="column-cards">
+                  {byColumn[col.key].length === 0 ? (
+                    <div className="column-empty">arraste um cliente pra cá</div>
+                  ) : (
+                    byColumn[col.key].map((c) => (
+                      <Card key={c.id} cliente={c} columnKey={col.key} onOpen={setSelected} onDragStart={handleDragStart} />
+                    ))
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-          {altos.length === 0 ? (
-            <div className="empty-state">nenhum cliente em alto no momento</div>
-          ) : (
-            <div className="grid">
-              {altos.map((c) => (
-                <ClienteCard key={c.id} cliente={c} onSave={handleSaveObs} />
-              ))}
-            </div>
-          )}
-
-          <div className="section-heading normal">
-            <h2>Normal</h2>
-            <div className="section-line" />
-            <span className="section-count">{normais.length}</span>
-          </div>
-          {normais.length === 0 ? (
-            <div className="empty-state">nenhum cliente em normal no momento</div>
-          ) : (
-            <div className="grid">
-              {normais.map((c) => (
-                <ClienteCard key={c.id} cliente={c} onSave={handleSaveObs} />
-              ))}
-            </div>
-          )}
         </>
+      )}
+
+      {selected && (
+        <DetailModal
+          cliente={selected}
+          onClose={() => setSelected(null)}
+          onSave={handleSaveObs}
+          onMarkOtimizado={(id) => { updateStatus(id, 'Otimizado'); setSelected(null); }}
+          onUnmarkOtimizado={(id) => { updateStatus(id, 'Normal'); setSelected(null); }}
+        />
       )}
     </div>
   );
