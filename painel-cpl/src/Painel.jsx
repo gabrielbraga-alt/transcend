@@ -30,7 +30,7 @@ function ClienteCard({ cliente, onSave }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const dirty = obs !== (cliente.observacao || '');
-  const isAlto = cliente.Status === 'alto';
+  const isAlto = (cliente.Status || '').toLowerCase() === 'alto';
 
   const handleSave = async () => {
     setSaving(true);
@@ -166,8 +166,8 @@ export default function Painel() {
     });
   }, [clientes, especialistaFiltro, busca]);
 
-  const altos = filtrados.filter((c) => c.Status === 'alto');
-  const normais = filtrados.filter((c) => c.Status !== 'alto');
+  const altos = filtrados.filter((c) => (c.Status || '').toLowerCase() === 'alto');
+  const normais = filtrados.filter((c) => (c.Status || '').toLowerCase() !== 'alto');
 
   return (
     <div className="painel-root">
